@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Subnautica Seafloor Surface</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://esm.sh/three@0.152.2';
+  import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+  import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x001a33); // underwater blue
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 50, 100);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding; // for correct color space
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  // Lighting
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  directionalLight.position.set(50, 100, 50);
+  scene.add(directionalLight);
+
+  const ambientLight = new THREE.AmbientLight(0x404040, 0.9);
+  scene.add(ambientLight);
+
+  // Load heightmap JSON and create surface with texture
+  fetch('heightmap.json')
+    .then(res => res.json())
+    .then(heightmap => {
+      const width = heightmap[0].length;
+      const height = heightmap.length;
+      const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+      const position = geometry.attributes.position;
+
+      for (let i = 0; i < position.count; i++) {
+        const ix = i % width;
+        const iy = Math.floor(i / width);
+        const z = heightmap[iy][ix];
+        const correctedZ = (z === null || isNaN(z)) ? -999 : z / 30;
+        position.setZ(i, correctedZ);
+      }
+
+      geometry.computeVertexNormals();
+
+      const textureLoader = new THREE.TextureLoader();
+      textureLoader.load('texture.png', (texture) => {
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.LinearFilter;
+        texture.encoding = THREE.sRGBEncoding;
+
+        const material = new THREE.MeshStandardMaterial({
+          map: texture,
+          side: THREE.DoubleSide,
+          metalness: 0.1,
+          roughness: 0.8,
+          clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+          clipShadows: true
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2;
+        scene.add(mesh);
+      });
+    });
+
+  // Load Aurora GLB model
+  const loader = new GLTFLoader();
+  loader.load('aurora.glb', function(gltf) {
+    const model = gltf.scene;
+
+    model.scale.set(0.22, 0.22, 0.22);
+    model.position.set(24, -5, 6);
+    model.rotation.y = 0.55 * Math.PI / 2;
+
+    scene.add(model);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+  // Animation loop
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Resize handling
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>

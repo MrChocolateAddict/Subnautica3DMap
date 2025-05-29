@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Generated Surface Test</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://esm.sh/three@0.152.2';
+  import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x001a33);  // dark blue for underwater feel
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 50, 100);
+
+  const renderer = new THREE.WebGLRenderer({antialias:true});
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  // Helpers
+  const axesHelper = new THREE.AxesHelper(50);
+  scene.add(axesHelper);
+
+  const gridHelper = new THREE.GridHelper(200, 20);
+  scene.add(gridHelper);
+
+  // Create seafloor geometry
+  const width = 100;
+  const height = 100;
+  const segments = 50;
+
+  const geometry = new THREE.PlaneGeometry(width, height, segments, segments);
+
+  // Modify vertices for seafloor shape
+  const position = geometry.attributes.position;
+  for (let i = 0; i < position.count; i++) {
+    const x = position.getX(i);
+    const y = position.getY(i);
+
+    // height = combination of sine waves to simulate bumps
+    const heightValue =
+      5 * Math.sin(x * 0.2) * Math.cos(y * 0.2) +  // bigger smooth hills
+      2 * Math.sin(x * 0.5) * Math.cos(y * 0.5);   // smaller bumps
+
+    position.setZ(i, heightValue);
+  }
+  geometry.computeVertexNormals();
+
+  // Rotate plane to horizontal
+  const material = new THREE.MeshStandardMaterial({
+    color: 0x005580,
+    wireframe: false,
+    flatShading: false,
+    side: THREE.DoubleSide,
+    metalness: 0.1,
+    roughness: 0.8,
+  });
+  const seafloor = new THREE.Mesh(geometry, material);
+  seafloor.rotation.x = -Math.PI / 2;
+  scene.add(seafloor);
+
+  // Light to see terrain shading
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+  directionalLight.position.set(50, 100, 50);
+  scene.add(directionalLight);
+
+  const ambientLight = new THREE.AmbientLight(0x404040, 0.7);
+  scene.add(ambientLight);
+
+  // Animate loop
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  // Resize handler
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth/window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
