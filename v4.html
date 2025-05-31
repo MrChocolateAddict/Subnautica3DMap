@@ -13,6 +13,7 @@
   import * as THREE from 'https://esm.sh/three@0.152.2';
   import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+  import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
 
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x001a33); // underwater blue
@@ -22,7 +23,7 @@
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputEncoding = THREE.sRGBEncoding; // for correct color space
+  renderer.outputEncoding = THREE.sRGBEncoding;
   document.body.appendChild(renderer.domElement);
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -35,6 +36,27 @@
 
   const ambientLight = new THREE.AmbientLight(0x404040, 0.9);
   scene.add(ambientLight);
+
+  // Water surface
+  const waterGeometry = new THREE.BoxGeometry(100, 0.0001, 100);
+  const waterMaterial = new THREE.MeshBasicMaterial({
+    color: 0x3399ff,
+    transparent: true,
+    opacity: 0.25,
+    side: THREE.DoubleSide,
+	depthWrite: false // Test
+  });
+
+  const waterSurface = new THREE.Mesh(waterGeometry, waterMaterial);
+  waterSurface.position.y = 0.001; // Adjust to your actual sea level
+  scene.add(waterSurface);
+
+  // dat.GUI toggle
+  const gui = new GUI();
+  const options = { showWater: true };
+  gui.add(options, 'showWater').name('Show Water Surface').onChange(value => {
+    waterSurface.visible = value;
+  });
 
   // Load heightmap JSON and create surface with texture
   fetch('heightmap.json')
@@ -83,8 +105,10 @@
     const model = gltf.scene;
 
     model.scale.set(0.22, 0.22, 0.22);
-    model.position.set(24, -5, 6);
-    model.rotation.y = 0.55 * Math.PI / 2;
+    model.position.set(23.5, -5, 5.5); // Position
+    model.rotation.y = 0.55 * Math.PI / 2; // Facing NE
+	model.rotation.x = -0.1; // Tilted a little to the left
+	model.rotation.z = -0.05; // Tilted a little forward
 
     scene.add(model);
   }, undefined, function(error) {
@@ -108,3 +132,4 @@
 </script>
 </body>
 </html>
+
