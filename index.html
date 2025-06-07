@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Subnautica 3D Map</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    .label {
+      color: #cc3333;
+      font-size: 16px;
+      font-weight: bold;
+      margin-top: -1em;
+      text-shadow: 0 0 5px black;
+    }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://esm.sh/three@0.152.2';
+  import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+  import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+  import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
+  import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.152.2/examples/jsm/renderers/CSS2DRenderer.js';
+    
+  // Helper function
+  function setEscapePodsVisibility(visible) {
+    escapePodsGroup.visible = visible;
+    labelRenderer.domElement.style.display = visible ? '' : 'none';
+  }
+  function setSmallWrecksVisibility(visible) {
+    smallWrecksGroup.visible = visible;
+  }
+  function setLargeWrecksVisibility(visible) {
+    largeWrecksGroup.visible = visible;
+  }
+
+  // Append DOM element
+  const labelRenderer = new CSS2DRenderer();
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.domElement.style.position = 'absolute';
+  labelRenderer.domElement.style.top = '0px';
+  labelRenderer.domElement.style.pointerEvents = 'none'; // Allows mouse events to pass through
+  document.body.appendChild(labelRenderer.domElement);
+
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x001a33); // underwater blue
+
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+  camera.position.set(0, 50, 100);
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.outputEncoding = THREE.sRGBEncoding; // for correct color space
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+
+  // Lighting
+  const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
+  directionalLight.position.set(50, 100, 50);
+  scene.add(directionalLight);
+
+  const ambientLight = new THREE.AmbientLight(0x404040, 0.9);
+  scene.add(ambientLight);
+
+  // Water surface
+  const waterGeometry = new THREE.BoxGeometry(100, 0.0001, 100);
+  const waterMaterial = new THREE.MeshBasicMaterial({
+    color: 0x3399ff,
+    transparent: true,
+    opacity: 0.2,
+    side: THREE.DoubleSide,
+	depthWrite: false // Test
+  });
+
+  const waterSurface = new THREE.Mesh(waterGeometry, waterMaterial);
+  waterSurface.position.y = -0.08; // Adjust to your actual sea level
+  scene.add(waterSurface);
+
+  // dat.GUI toggle
+  const gui = new GUI();
+  const options = { showWater: true };
+  gui.add(options, 'showWater').name('Water Surface').onChange(value => {
+    waterSurface.visible = value;
+  });
+
+  // Load heightmap JSON and create surface with texture
+  fetch('heightmap.json')
+    .then(res => res.json())
+    .then(heightmap => {
+      const width = heightmap[0].length;
+      const height = heightmap.length;
+      const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+      const position = geometry.attributes.position;
+
+      for (let i = 0; i < position.count; i++) {
+        const ix = i % width;
+        const iy = Math.floor(i / width);
+        const z = heightmap[iy][ix];
+        // Rounding in Python code in surface/
+        const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
+        position.setZ(i, correctedZ);
+      }
+
+      geometry.computeVertexNormals();
+
+      const textureLoader = new THREE.TextureLoader();
+      textureLoader.load('surfaceTexture.png', (texture) => {
+        texture.wrapS = THREE.ClampToEdgeWrapping;
+        texture.wrapT = THREE.ClampToEdgeWrapping;
+        texture.minFilter = THREE.LinearFilter;
+        texture.encoding = THREE.sRGBEncoding;
+
+        const material = new THREE.MeshStandardMaterial({
+          map: texture,
+          side: THREE.DoubleSide,
+          metalness: 0.1,
+          roughness: 0.8,
+          clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+          clipShadows: true
+        });
+
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.rotation.x = -Math.PI / 2;
+        scene.add(mesh);
+      });
+    });
+
+  // GLB models
+  const loader = new GLTFLoader();
+  
+  // --------------- EscapePods
+
+  // Create a group to hold the pods
+  const escapePodsGroup = new THREE.Group();
+  scene.add(escapePodsGroup);
+
+  // Toggle control
+  const optionsEP = { showEscapePods: false }; // Change to true/false for default
+  gui.add(optionsEP, 'showEscapePods').name('Escape Pods').onChange(value => {
+    setEscapePodsVisibility(value);
+  });
+
+  const escapePodPositions = [
+    { LifePod: 2, position: [-11.96,-14.0,-32.42]},
+    { LifePod: 3, position: [-0.81,-0.48,-9.96]},
+    { LifePod: 4, position: [17.5,-0.2,-3.93]},
+    { LifePod: 6, position: [8.86,-3.08,-7.54]},
+    { LifePod: 7, position: [-1.34,-5.01,25.37]},
+    { LifePod: 12, position: [27.27,-7.5,-13.87]},
+    { LifePod: 13, position: [-22.44,-4.96,-12.4]},
+    { LifePod: 17, position: [-12.45,-2.55,1.1]},
+    { LifePod: 19, position: [-19.73,-5.54,21.31]}
+  ];
+
+  // Load and clone model
+  loader.load('EscapePodModel.glb', function (gltf) {
+    const baseModel = gltf.scene;
+
+    escapePodPositions.forEach(pod => {
+      const clone = baseModel.clone(true);
+      clone.position.set(...pod.position);
+      clone.scale.set(0.45, 0.45, 0.45);
+      escapePodsGroup.add(clone);
+
+      // Create label element
+      const labelDiv = document.createElement('div');
+      labelDiv.className = 'label';
+      labelDiv.textContent = pod.LifePod;
+
+      // Create CSS2DObject and set its position
+      const label = new CSS2DObject(labelDiv);
+      label.position.set(0, 1.5, 0); // relative to the pod
+      clone.add(label);
+
+    });
+    // After loading all pods
+    setEscapePodsVisibility(optionsEP.showEscapePods);
+  }, undefined, function (error) {
+    console.error('Error loading Escape Pod model:', error);
+  });
+
+
+
+  // --------------- Small wrecks
+  const smallWreckPositions = [
+    { id: 1, position: [-12.7,-2.52,5.25]},
+    { id: 2, position: [-3.91,-0.56,5.49]},
+    { id: 3, position: [4.03,-2.41,12.7]},
+    { id: 4, position: [4.27,-0.64,6.18]},
+    { id: 5, position: [1.59,-0.28,2.08]},
+    { id: 6, position: [7.57,-0.64,2.91]},
+    { id: 7, position: [6.59,-2.38,-1.71]},
+    { id: 8, position: [2.2,-0.56,-2.93]},
+    { id: 9, position: [0.49,-0.28,-7.32]},
+    { id: 10, position: [7.86,-2.52,-5.42]},
+    { id: 11, position: [-9.03,-2.8,-11.6]},
+    { id: 12, position: [-6.93,-2.6,-14.79]}
+];
+
+  // Create a group to hold the wrecks
+  const smallWrecksGroup = new THREE.Group();
+  scene.add(smallWrecksGroup);
+
+  // Toggle control
+  const optionsSW = { showSmallWrecks: false }; // Change to true/false for default
+  gui.add(optionsSW, 'showSmallWrecks').name('Small Wrecks').onChange(value => {
+    smallWrecksGroup.visible = value;
+  });
+
+  // Load and clone model
+  loader.load('SmallWreck.glb', function (gltf) {
+    const baseModelSW = gltf.scene;
+
+    smallWreckPositions.forEach(swreck => {
+      const cloneSW = baseModelSW.clone(true);
+      cloneSW.position.set(...swreck.position);
+      cloneSW.scale.set(0.23, 0.23, 0.23);
+      smallWrecksGroup.add(cloneSW);
+    });
+    // After loading all pods
+    setSmallWrecksVisibility(optionsSW.showSmallWrecks);
+  }, undefined, function (error) {
+    console.error('Error loading Small Wreck model:', error);
+  });
+
+// --------------- Large wrecks
+const largeWreckPositions = [
+    { id: 1, position: [25.81,-7.11,-33.18]},
+    { id: 2, position: [17.11,-9.69,-29.88]},
+    { id: 3, position: [31.96,-6.02,-13.92]},
+    { id: 4, position: [22.68,-5.54,-14.48]},
+    { id: 5, position: [-2.49,-5.01,-21.0]},
+    { id: 6, position: [-9.52,-3.36,-15.82]},
+    { id: 7, position: [-15.75,-3.36,-18.87]},
+    { id: 8, position: [-35.35,-9.3,-17.65]},
+    { id: 9, position: [6.98,-2.02,-10.84]},
+    { id: 10, position: [1.59,-0.7,-9.4]},
+    { id: 11, position: [-7.81,-1.6,-6.15]},
+    { id: 12, position: [8.94,-0.17,4.96]},
+    { id: 13, position: [-0.98,-0.39,9.77]},
+    { id: 14, position: [-0.37,-2.69,15.23]},
+    { id: 15, position: [-7.08,-6.22,18.87]},
+    { id: 16, position: [-10.55,-2.52,6.54]},
+    { id: 17, position: [-15.5,-1.4,0.05]},
+    { id: 18, position: [-29.54,-6.08,-0.17]},
+    { id: 19, position: [-39.84,-9.35,-2.03]},
+    { id: 20, position: [-29.32,-9.07,9.67]},
+    { id: 21, position: [-19.21,-5.82,17.41]},
+    { id: 22, position: [-27.61,-4.65,17.8]},
+    { id: 23, position: [-21.12,-12.04,33.94]}
+];
+
+// Create a group to hold the wrecks
+const largeWrecksGroup = new THREE.Group();
+scene.add(largeWrecksGroup);
+
+// Toggle control
+const optionsLW = { showLargeWrecks: false }; // Change to true/false for default
+gui.add(optionsLW, 'showLargeWrecks').name('Large Wrecks').onChange(value => {
+  largeWrecksGroup.visible = value;
+});
+
+// Load and clone model
+loader.load('LargeWreck.glb', function (gltf) {
+  const baseModelLW = gltf.scene;
+
+  largeWreckPositions.forEach(lwreck => {
+    const cloneLW = baseModelLW.clone(true);
+    cloneLW.position.set(...lwreck.position);
+    cloneLW.scale.set(0.28, 0.28, 0.28);
+    largeWrecksGroup.add(cloneLW);
+  });
+  // After loading all pods
+  setLargeWrecksVisibility(optionsLW.showLargeWrecks);
+}, undefined, function (error) {
+  console.error('Error loading Large Wreck model:', error);
+});
+
+
+  // Load Aurora GLB model
+  loader.load('Aurora.glb', function(gltf) {
+    const modelA2 = gltf.scene;
+
+    const auroraScaleFactor = 1.7
+    modelA2.scale.set(auroraScaleFactor, auroraScaleFactor, auroraScaleFactor);
+    modelA2.position.set(20.2, -6, 9.1); // Position
+    modelA2.rotation.y = -0.45 * Math.PI / 2; // Facing NE
+ 	  modelA2.rotation.x = -0.11; // Tilted a little forward
+	  modelA2.rotation.z = 0.05; // Tilted a little to the left
+
+    scene.add(modelA2);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+  // Load Floating island model
+  loader.load('FloatingIsland.glb', function(gltf) {
+    const model2 = gltf.scene;
+
+    model2.scale.set(0.025, 0.035, 0.025);
+    model2.position.set(-18, -0.1, 27);
+    model2.rotation.y = -2.1 * Math.PI / 2;
+
+    scene.add(model2);
+  }, undefined, function(error) {
+    console.error('Error loading FloatIsland model:', error);
+  });
+
+  // QED - Quarantine Enforcement Platform
+  loader.load('QED.glb', function(gltf) {
+    const model9 = gltf.scene;
+
+    model9.scale.set(0.5, 0.5, 0.5);
+    model9.position.set(10.2, 0.1, -27.2);
+    model9.rotation.y = -0.4 * Math.PI / 2;
+
+    scene.add(model9);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+  // ---------------------- LAYER 1 - Lost River & friends
+
+  // Load Layer1 GLB model
+  loader.load('Layer1.glb', function(gltf) {
+    const model3 = gltf.scene;
+
+    // Apply white material and make it double-sided
+    model3.traverse(function(child) {
+      if (child.isMesh) {
+        child.material.side = THREE.DoubleSide; // Don't replace, just modify
+      }
+    });
+
+    //model.scale.set(0.05, 0.025, 0.05); // ds2
+    const scaleFactor = 0.9;
+    model3.scale.set(0.1*scaleFactor, 0.08*scaleFactor, 0.1*scaleFactor); // ds4
+    model3.position.set(0, -30, 0); // Position
+    model3.rotation.y = 0; 
+
+    scene.add(model3);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+  // ---------------------- LAYER 2 - Inactive Lava Zone
+
+  // Load Layer2 GLB model
+  loader.load('Layer2.glb', function(gltf) {
+    const model4 = gltf.scene;
+
+    // Apply white material and make it double-sided
+    model4.traverse(function(child) {
+      if (child.isMesh) {
+        child.material.side = THREE.DoubleSide; // Don't replace, just modify
+      }
+    });
+
+    model4.scale.set(0.1, 0.08, 0.10); // ds4
+    model4.position.set(-7, -45, -2); // Position
+    model4.rotation.y = 0.025 * Math.PI / 2; // Rotation
+
+    scene.add(model4);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+
+
+
+  // ---------------------- LAYER 3 - Active Lava Zone
+
+  // Load Layer1 GLB model
+  loader.load('Layer3.glb', function(gltf) {
+    const model5 = gltf.scene;
+
+    // Apply white material and make it double-sided
+    model5.traverse(function(child) {
+      if (child.isMesh) {
+        child.material.side = THREE.DoubleSide; // Don't replace, just modify
+      }
+    });
+
+    const scaleFactor = 1;
+    model5.scale.set(0.1*scaleFactor, 0.08*scaleFactor, 0.1*scaleFactor); // ds4
+    model5.position.set(7, -55, 7); // Position
+    model5.rotation.y = 0 * Math.PI / 2; // Rotation
+
+    scene.add(model5);
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+  // ---------------------------------- DONE
+
+  // Animation loop
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+    labelRenderer.render(scene, camera);
+  }
+  animate();
+
+  // Resize handling
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
