@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Ghost Segment Follow</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://esm.sh/three@0.152.2';
+  import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+  import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  camera.position.set(0, 50, 90);
+  controls.update();
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(10, 10, 10);
+  scene.add(dirLight);
+
+  const loader = new GLTFLoader();
+
+  const baseScale = 0.5;
+  const maxPath = 300;
+  const speed = 0.001;
+  const delayBase = 5;
+
+  const numNecks = 3;
+  const numMids = 12; // Change this number to test more/less mids
+  const scaleFactor = 0.93; // Each mid section gets smaller by this factor
+
+  const points = [
+    new THREE.Vector3(-31,  0,   0),
+    new THREE.Vector3(-30,  5, -15),
+    new THREE.Vector3(-15,  3, -30),
+    new THREE.Vector3(  0,  0, -35),
+    new THREE.Vector3( 15, -3, -30),
+    new THREE.Vector3( 30, -5, -15),
+    new THREE.Vector3( 40, -2,   0),
+    new THREE.Vector3( 30,  5,  15),
+    new THREE.Vector3( 15,  3,  30),
+    new THREE.Vector3(  0,  0,  35),
+    new THREE.Vector3(-15, -3,  30),
+    new THREE.Vector3(-30, -5,  15),
+    new THREE.Vector3(-31,  0,   0)
+  ];
+
+  const curve = new THREE.CatmullRomCurve3(points, true, 'chordal', 0.5);
+
+  const pathHistory = [];
+  let segments = [];
+  let segmentDelays = [];
+  let t = 0;
+
+  function loadSegment(path) {
+    return new Promise((resolve) => {
+      loader.load(path, (gltf) => {
+        const model = gltf.scene;
+        model.scale.set(baseScale, baseScale, baseScale);
+        scene.add(model);
+        resolve(model);
+      });
+    });
+  }
+
+  async function loadAllSegments() {
+    const head = await loadSegment('GhostHead.glb');
+    head.scale.set(0.5, 0.5, 0.5);
+    segments.push(head);
+    segmentDelays.push(0); // Head has no delay
+
+    for (let i = 0; i < numNecks; i++) {
+      const neck = await loadSegment('GhostNeck.glb');
+      segments.push(neck);
+      segmentDelays.push(delayBase); // Constant delay for necks
+    }
+
+    for (let i = 0; i < numMids; i++) {
+      const mid = await loadSegment('GhostMid.glb');
+      const scale = baseScale * Math.pow(scaleFactor, i);
+      mid.scale.set(scale, scale, scale);
+      segments.push(mid);
+
+      // Dynamic delay based on scale
+      const delay = delayBase * (0.7 + 0.2 * (scale / baseScale));
+      segmentDelays.push(delay);
+    }
+
+    prefillPathHistory();
+    animate();
+  }
+
+  function prefillPathHistory() {
+    let tempT = 0;
+    const step = speed;
+    let totalDelay = segmentDelays.reduce((a, b) => a + b, 0);
+
+    while (pathHistory.length < totalDelay) {
+      const position = curve.getPointAt(tempT);
+      pathHistory.unshift(position.clone());
+      tempT += step;
+      if (tempT > 1) tempT -= 1;
+    }
+
+    let timeOffset = 0;
+    for (let i = 1; i < segments.length; i++) {
+      timeOffset += segmentDelays[i];
+      const index = Math.floor(timeOffset);
+      if (pathHistory[index]) {
+        segments[i].position.copy(pathHistory[index]);
+        const lookIndex = index - 2;
+        if (pathHistory[lookIndex]) {
+          segments[i].lookAt(pathHistory[lookIndex]);
+        }
+      }
+    }
+
+    const head = segments[0];
+    const headPos = curve.getPointAt(tempT);
+    head.position.copy(headPos);
+    const lookPos = curve.getPointAt((tempT + 0.01) % 1);
+    head.lookAt(lookPos);
+    t = tempT;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+
+    if (segments.length > 0) {
+      t += speed;
+      if (t > 1) t = 0;
+
+      const head = segments[0];
+      const position = curve.getPointAt(t);
+      head.position.copy(position);
+      const lookAtT = (t + 0.01) % 1;
+      const lookAtPos = curve.getPointAt(lookAtT);
+      head.lookAt(lookAtPos);
+
+      pathHistory.unshift(head.position.clone());
+      if (pathHistory.length > maxPath) pathHistory.pop();
+
+      let timeOffset = 0;
+      for (let i = 1; i < segments.length; i++) {
+        timeOffset += segmentDelays[i];
+        const index = Math.floor(timeOffset);
+        const lookIndex = index - 2;
+
+        if (pathHistory[index]) {
+          segments[i].position.copy(pathHistory[index]);
+          if (pathHistory[lookIndex]) {
+            segments[i].lookAt(pathHistory[lookIndex]);
+          }
+        }
+      }
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  loadAllSegments();
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
