@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sea Dragon Swim</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+  </style>
+</head>
+<body>
+<script type="module">
+  import * as THREE from 'https://esm.sh/three@0.152.2';
+  import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+  import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  document.body.appendChild(renderer.domElement);
+
+  const controls = new OrbitControls(camera, renderer.domElement);
+  camera.position.set(0, 10, 45);
+  controls.update();
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+  dirLight.position.set(10, 10, 10);
+  scene.add(dirLight);
+
+  const loader = new GLTFLoader();
+  let seaDragon;
+
+  const scale = 1//0.5;
+  const points = [
+    new THREE.Vector3(-31,  0,   0),
+    new THREE.Vector3(-30,  5, -15),
+    new THREE.Vector3(-15,  3, -30),
+    new THREE.Vector3(  0,  0, -35),
+    new THREE.Vector3( 15, -3, -30),
+    new THREE.Vector3( 30, -5, -15),
+    new THREE.Vector3( 40, -2,   0),
+    new THREE.Vector3( 30,  5,  15),
+    new THREE.Vector3( 15,  3,  30),
+    new THREE.Vector3(  0,  0,  35),
+    new THREE.Vector3(-15, -3,  30),
+    new THREE.Vector3(-30, -5,  15),
+    new THREE.Vector3(-31,  0,   0)
+  ];
+
+  const curve = new THREE.CatmullRomCurve3(points, true, 'chordal', 0.5);
+  let t = 0;
+  const speed = 0.0004;
+
+  loader.load('SeaDragon.glb', (gltf) => {
+    seaDragon = gltf.scene;
+    seaDragon.scale.set(scale, scale, scale);
+    scene.add(seaDragon);
+    animate();
+  });
+
+  function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+
+    if (seaDragon) {
+      t += speed;
+      if (t > 1) t -= 1;
+
+      const position = curve.getPointAt(t);
+      const lookAt = curve.getPointAt((t + 0.01) % 1);
+
+      seaDragon.position.copy(position);
+      seaDragon.lookAt(lookAt);
+    }
+
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener('resize', () => {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+</script>
+</body>
+</html>
