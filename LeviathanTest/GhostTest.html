@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Ghost Segment Follow</title>
+  <title>Ghost Segment Follow - Proportion fix</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
@@ -35,11 +35,11 @@
   const baseScale = 0.5;
   const maxPath = 300;
   const speed = 0.001;
-  const delayBase = 5;
+  const fixedDelay = 6.5; // Fixed delay for all segments
 
   const numNecks = 3;
   const numMids = 12; // Change this number to test more/less mids
-  const scaleFactor = 0.93; // Each mid section gets smaller by this factor
+  const scaleFactor = 0.93; // Scale factor for width and height only
 
   const points = [
     new THREE.Vector3(-31,  0,   0),
@@ -68,7 +68,6 @@
     return new Promise((resolve) => {
       loader.load(path, (gltf) => {
         const model = gltf.scene;
-        model.scale.set(baseScale, baseScale, baseScale);
         scene.add(model);
         resolve(model);
       });
@@ -77,25 +76,26 @@
 
   async function loadAllSegments() {
     const head = await loadSegment('GhostHead.glb');
-    head.scale.set(0.5, 0.5, 0.5);
+    head.scale.set(baseScale-0.05, baseScale-0.05, baseScale-0.05);
     segments.push(head);
     segmentDelays.push(0); // Head has no delay
 
     for (let i = 0; i < numNecks; i++) {
       const neck = await loadSegment('GhostNeck.glb');
+      neck.scale.set(baseScale, baseScale, baseScale);
       segments.push(neck);
-      segmentDelays.push(delayBase); // Constant delay for necks
+      segmentDelays.push(fixedDelay); // Fixed delay for necks
     }
 
     for (let i = 0; i < numMids; i++) {
       const mid = await loadSegment('GhostMid.glb');
-      const scale = baseScale * Math.pow(scaleFactor, i);
-      mid.scale.set(scale, scale, scale);
-      segments.push(mid);
 
-      // Dynamic delay based on scale
-      const delay = delayBase * (0.7 + 0.2 * (scale / baseScale));
-      segmentDelays.push(delay);
+      // Scale width and height down but keep length (Z) constant
+      const scaleXY = baseScale * Math.pow(scaleFactor, i);
+      mid.scale.set(scaleXY, scaleXY, baseScale);
+
+      segments.push(mid);
+      segmentDelays.push(fixedDelay); // Fixed delay for all mids
     }
 
     prefillPathHistory();
@@ -181,3 +181,4 @@
 </script>
 </body>
 </html>
+
