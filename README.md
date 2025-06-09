@@ -4,6 +4,9 @@ Hosted on:
 
 https://mrchocolateaddict.github.io/Subnautica3DMap/
 
+Now with leviathans that make the world come alive! Did not include every single leviathan
+spawn in order to reduce computations.
+
 ## Attributions
 
 I used the follwing model for the Aurora made by **Pixel Meteor**:
