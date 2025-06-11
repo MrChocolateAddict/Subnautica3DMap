@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Subnautica 3D Map</title>
+  <link rel="icon" href="https://mrchocolateaddict.github.io/Subnautica3DMap/favicon.ico" type="image/x-icon" />
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
@@ -28,6 +29,22 @@
       justify-content: center;
       z-index: 9999;
     }
+    #loadingBarContainer {
+      width: 300px;
+      height: 10px;
+      background: #444;
+      margin: 1em auto 0 auto;;
+      border-radius: 5px;
+      box-shadow: inset 0 0 5px #222;
+    }
+
+    #loadingBarProgress {
+      width: 0%;
+      height: 100%;
+      background: #a5def8;
+      border-radius: 5px;
+      transition: width 0.3s ease;
+    }
 
     #loadingTitle {
       font-size: 1.5em;
@@ -47,6 +64,17 @@
   </style>
 </head>
 <body>
+
+<div id="loadingOverlay">
+  <div>
+    <div id="loadingTitle">Subnautica 3D Map</div>
+    <div id="loadingText">Loading...</div>
+    <div id="loadingBarContainer">
+      <div id="loadingBarProgress"></div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import * as THREE from 'https://esm.sh/three@0.152.2';
   import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
@@ -381,49 +409,149 @@
     waterSurface.visible = value;
   });
 
-  // Load heightmap JSON and create surface with texture
-  fetch('heightmap.json')
-    .then(res => res.json())
-    .then(heightmap => {
-      const width = heightmap[0].length;
-      const height = heightmap.length;
-      const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
-      const position = geometry.attributes.position;
 
-      for (let i = 0; i < position.count; i++) {
-        const ix = i % width;
-        const iy = Math.floor(i / width);
-        const z = heightmap[iy][ix];
-        // Rounding in Python code in surface/
-        const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
-        position.setZ(i, correctedZ);
+  // ========================================= Heightmap
+  const loadingBar = document.getElementById('loadingBarProgress');
+  async function loadHeightmapWithProgress(url) {
+    const response = await fetch(url);
+
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+    const contentLength = response.headers.get('Content-Length');
+
+    if (!contentLength) {
+      console.warn('Content-Length header is missing. Progress bar will not work properly.');
+    }
+
+    const total = contentLength ? parseInt(contentLength, 10) : null;
+    let loaded = 0;
+
+    const reader = response.body.getReader();
+    const chunks = [];
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      loaded += value.length;
+
+      if (total) {
+        const percent = Math.floor((loaded / total) * 100);
+        if (loadingBar) loadingBar.style.width = percent + '%';
       }
+    }
 
-      geometry.computeVertexNormals();
+    // Concatenate chunks into one Uint8Array
+    const concatenated = new Uint8Array(loaded);
+    let position = 0;
+    for (let chunk of chunks) {
+      concatenated.set(chunk, position);
+      position += chunk.length;
+    }
 
-      const textureLoader = new THREE.TextureLoader();
-      textureLoader.load('surfaceTexture.png', (texture) => {
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.LinearFilter;
-        texture.colorSpace = THREE.SRGBColorSpace;
+    // Decode as text
+    const text = new TextDecoder('utf-8').decode(concatenated);
 
-        const material = new THREE.MeshStandardMaterial({
-          map: texture,
-          side: THREE.DoubleSide,
-          metalness: 0.1,
-          roughness: 0.8,
-          clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
-          clipShadows: true
+    // Parse JSON
+    const heightmap = JSON.parse(text);
+
+    return heightmap;
+  }
+
+    loadHeightmapWithProgress('heightmap.json')
+      .then(heightmap => {
+        const width = heightmap[0].length;
+        const height = heightmap.length;
+        const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+        const position = geometry.attributes.position;
+
+        for (let i = 0; i < position.count; i++) {
+          const ix = i % width;
+          const iy = Math.floor(i / width);
+          const z = heightmap[iy][ix];
+          const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
+          position.setZ(i, correctedZ);
+        }
+        
+
+        geometry.computeVertexNormals();
+
+        const textureLoader = new THREE.TextureLoader();
+        textureLoader.load('surfaceTexture.png', (texture) => {
+          texture.wrapS = THREE.ClampToEdgeWrapping;
+          texture.wrapT = THREE.ClampToEdgeWrapping;
+          texture.minFilter = THREE.LinearFilter;
+          texture.colorSpace = THREE.SRGBColorSpace;
+
+          const material = new THREE.MeshStandardMaterial({
+            map: texture,
+            side: THREE.DoubleSide,
+            metalness: 0.1,
+            roughness: 0.8,
+            clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+            clipShadows: true
+          });
+
+          const mesh = new THREE.Mesh(geometry, material);
+          mesh.rotation.x = -Math.PI / 2;
+          scene.add(mesh);
+          // Hide loading overlay when done
+          document.getElementById('loadingOverlay').style.display = 'none';
         });
-
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.rotation.x = -Math.PI / 2;
-        scene.add(mesh);
-        // Surface added - heaviest part by far
-        document.getElementById('loadingOverlay').style.display = 'none';
+      })
+      .catch(err => {
+        console.error('Failed to load heightmap:', err);
+        document.getElementById('loadingText').textContent = 'Failed to load data.';
       });
-    });
+
+
+
+
+
+
+  // Load heightmap JSON and create surface with texture
+  // fetch('heightmap.json')
+  //   .then(res => res.json())
+  //   .then(heightmap => {
+  //     const width = heightmap[0].length;
+  //     const height = heightmap.length;
+  //     const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+  //     const position = geometry.attributes.position;
+
+  //     for (let i = 0; i < position.count; i++) {
+  //       const ix = i % width;
+  //       const iy = Math.floor(i / width);
+  //       const z = heightmap[iy][ix];
+  //       // Rounding in Python code in surface/
+  //       const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
+  //       position.setZ(i, correctedZ);
+  //     }
+
+  //     geometry.computeVertexNormals();
+
+  //     const textureLoader = new THREE.TextureLoader();
+  //     textureLoader.load('surfaceTexture.png', (texture) => {
+  //       texture.wrapS = THREE.ClampToEdgeWrapping;
+  //       texture.wrapT = THREE.ClampToEdgeWrapping;
+  //       texture.minFilter = THREE.LinearFilter;
+  //       texture.colorSpace = THREE.SRGBColorSpace;
+
+  //       const material = new THREE.MeshStandardMaterial({
+  //         map: texture,
+  //         side: THREE.DoubleSide,
+  //         metalness: 0.1,
+  //         roughness: 0.8,
+  //         clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+  //         clipShadows: true
+  //       });
+
+  //       const mesh = new THREE.Mesh(geometry, material);
+  //       mesh.rotation.x = -Math.PI / 2;
+  //       scene.add(mesh);
+  //       // Surface added - heaviest part by far
+  //       document.getElementById('loadingOverlay').style.display = 'none';
+  //     });
+  //   });
 
   // GLB models
   const loader = new GLTFLoader();
@@ -934,12 +1062,7 @@ gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 </script>
-<div id="loadingOverlay">
-  <div>
-    <div id="loadingTitle">Subnautica 3D Map</div>
-    <div id="loadingText">Loading...</div>
-  </div>
-</div>
 </body>
 </html>
+
 
