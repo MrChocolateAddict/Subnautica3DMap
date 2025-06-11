@@ -437,7 +437,7 @@
 
       if (total) {
         const percent = Math.floor((loaded / total) * 100);
-        if (loadingBar) loadingBar.style.width = percent + '%';
+        if (loadingBar) loadingBar.style.width = Math.min(100, percent) + '%';
       }
     }
 
