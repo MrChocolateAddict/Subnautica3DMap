@@ -344,11 +344,6 @@
     largeWrecksGroup.visible = visible;
   }
 
-  // Global Leviathan variables
-  let SeaDragonLL;
-  let SeaDragonIA1;
-  let SeaDragonIA2;
-
   // Append DOM element
   const labelRenderer = new CSS2DRenderer();
   labelRenderer.setSize(window.innerWidth, window.innerHeight);
@@ -412,146 +407,89 @@
 
   // ========================================= Heightmap
   const loadingBar = document.getElementById('loadingBarProgress');
-  async function loadHeightmapWithProgress(url) {
-    const response = await fetch(url);
 
-    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+  function loadHeightmapImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = ''; // in case you're loading from another domain
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
+    });
+  }
 
-    const contentLength = response.headers.get('Content-Length');
+  async function processHeightmapImage(url) {
+    const img = await loadHeightmapImage(url);
 
-    if (!contentLength) {
-      console.warn('Content-Length header is missing. Progress bar will not work properly.');
-    }
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
 
-    const total = contentLength ? parseInt(contentLength, 10) : null;
-    let loaded = 0;
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const { data } = imageData;
 
-    const reader = response.body.getReader();
-    const chunks = [];
+    const width = img.width;
+    const height = img.height;
+    const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+    const position = geometry.attributes.position;
 
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      chunks.push(value);
-      loaded += value.length;
+    // Adjust these based on your encoding
+    const minZ = -500;
+    const maxZ = 160;
+    const scaleZ = maxZ - minZ;
 
-      if (total) {
-        const percent = Math.floor((loaded / total) * 100);
-        if (loadingBar) loadingBar.style.width = Math.min(100, percent) + '%';
+    for (let i = 0; i < position.count; i++) {
+      const ix = i % width;
+      const iy = Math.floor(i / width);
+
+      const pixelIndex = (iy * width + ix) * 4;
+      const high = data[pixelIndex];     // red channel
+      const low = data[pixelIndex + 1];  // green channel
+      const heightValue = ((high << 8) + low) / 65535; // normalized 0–1
+      const z = minZ + heightValue * scaleZ;
+
+      position.setZ(i, z / 35); // adjust this divisor to scale z visually
+
+      if (i % 100000 === 0 && loadingBar) {
+        const percent = Math.floor((i / position.count) * 100);
+        loadingBar.style.width = Math.min(100, percent) + '%';
+        await new Promise(r => setTimeout(r, 0)); // let browser update the DOM
       }
     }
 
-    // Concatenate chunks into one Uint8Array
-    const concatenated = new Uint8Array(loaded);
-    let position = 0;
-    for (let chunk of chunks) {
-      concatenated.set(chunk, position);
-      position += chunk.length;
-    }
+    geometry.computeVertexNormals();
 
-    // Decode as text
-    const text = new TextDecoder('utf-8').decode(concatenated);
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.load('surfaceTexture.png', (texture) => {
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearFilter;
+      texture.colorSpace = THREE.SRGBColorSpace;
 
-    // Parse JSON
-    const heightmap = JSON.parse(text);
-
-    return heightmap;
-  }
-
-    loadHeightmapWithProgress('heightmap.json')
-      .then(heightmap => {
-        const width = heightmap[0].length;
-        const height = heightmap.length;
-        const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
-        const position = geometry.attributes.position;
-
-        for (let i = 0; i < position.count; i++) {
-          const ix = i % width;
-          const iy = Math.floor(i / width);
-          const z = heightmap[iy][ix];
-          const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
-          position.setZ(i, correctedZ);
-        }
-        
-
-        geometry.computeVertexNormals();
-
-        const textureLoader = new THREE.TextureLoader();
-        textureLoader.load('surfaceTexture.png', (texture) => {
-          texture.wrapS = THREE.ClampToEdgeWrapping;
-          texture.wrapT = THREE.ClampToEdgeWrapping;
-          texture.minFilter = THREE.LinearFilter;
-          texture.colorSpace = THREE.SRGBColorSpace;
-
-          const material = new THREE.MeshStandardMaterial({
-            map: texture,
-            side: THREE.DoubleSide,
-            metalness: 0.1,
-            roughness: 0.8,
-            clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
-            clipShadows: true
-          });
-
-          const mesh = new THREE.Mesh(geometry, material);
-          mesh.rotation.x = -Math.PI / 2;
-          scene.add(mesh);
-          // Hide loading overlay when done
-          document.getElementById('loadingOverlay').style.display = 'none';
-        });
-      })
-      .catch(err => {
-        console.error('Failed to load heightmap:', err);
-        document.getElementById('loadingText').textContent = 'Failed to load data.';
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        metalness: 0.1,
+        roughness: 0.8,
+        clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+        clipShadows: true
       });
 
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = -Math.PI / 2;
+      scene.add(mesh);
 
+      // Hide loading overlay when done
+      document.getElementById('loadingOverlay').style.display = 'none';
+    });
+  }
 
-
-
-
-  // Load heightmap JSON and create surface with texture
-  // fetch('heightmap.json')
-  //   .then(res => res.json())
-  //   .then(heightmap => {
-  //     const width = heightmap[0].length;
-  //     const height = heightmap.length;
-  //     const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
-  //     const position = geometry.attributes.position;
-
-  //     for (let i = 0; i < position.count; i++) {
-  //       const ix = i % width;
-  //       const iy = Math.floor(i / width);
-  //       const z = heightmap[iy][ix];
-  //       // Rounding in Python code in surface/
-  //       const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
-  //       position.setZ(i, correctedZ);
-  //     }
-
-  //     geometry.computeVertexNormals();
-
-  //     const textureLoader = new THREE.TextureLoader();
-  //     textureLoader.load('surfaceTexture.png', (texture) => {
-  //       texture.wrapS = THREE.ClampToEdgeWrapping;
-  //       texture.wrapT = THREE.ClampToEdgeWrapping;
-  //       texture.minFilter = THREE.LinearFilter;
-  //       texture.colorSpace = THREE.SRGBColorSpace;
-
-  //       const material = new THREE.MeshStandardMaterial({
-  //         map: texture,
-  //         side: THREE.DoubleSide,
-  //         metalness: 0.1,
-  //         roughness: 0.8,
-  //         clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
-  //         clipShadows: true
-  //       });
-
-  //       const mesh = new THREE.Mesh(geometry, material);
-  //       mesh.rotation.x = -Math.PI / 2;
-  //       scene.add(mesh);
-  //       // Surface added - heaviest part by far
-  //       document.getElementById('loadingOverlay').style.display = 'none';
-  //     });
-  //   });
+  processHeightmapImage('heightmap_16bit.png').catch(err => {
+    console.error('Failed to load heightmap image:', err);
+    document.getElementById('loadingText').textContent = 'Failed to load data.';
+  });
 
   // GLB models
   const loader = new GLTFLoader();
@@ -814,19 +752,25 @@ loader.load('LargeWreck.glb', function (gltf) {
     console.error('Error loading GLB model:', error);
   });
 
-  // ---------------------------------- Leviathan Logic
-gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
-  // Existing Sea Dragon visibility toggles
-  if (SeaDragonLL) SeaDragonLL.visible = value;
-  if (SeaDragonIA1) SeaDragonIA1.visible = value;
-  if (SeaDragonIA2) SeaDragonIA2.visible = value;
+  // ============================================================= Leviathan Logic
 
-  // Toggle all Ghost Leviathans visibility
-  ghostLeviathans.forEach(ghost => ghost.setVisible(value));
+  // Global Leviathan variables
+  let SeaDragonLL;
+  let SeaDragonIA1;
+  let SeaDragonIA2;
 
-  // Toggle all Reaper Leviathans visibility
-  reaperLeviathans.forEach(reaper => reaper.setVisible(value));
-});
+  gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
+    // Existing Sea Dragon visibility toggles
+    if (SeaDragonLL) SeaDragonLL.visible = value;
+    if (SeaDragonIA1) SeaDragonIA1.visible = value;
+    if (SeaDragonIA2) SeaDragonIA2.visible = value;
+
+    // Toggle all Ghost Leviathans visibility
+    ghostLeviathans.forEach(ghost => ghost.setVisible(value));
+
+    // Toggle all Reaper Leviathans visibility
+    reaperLeviathans.forEach(reaper => reaper.setVisible(value));
+  });
 
   //  ============================================================== Sea Dragons
   loader.load('SeaDragon.glb', function(gltf) {
@@ -976,7 +920,7 @@ gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
     { basePoint: new THREE.Vector3(29.62, -7.44, -32.57) }, // North East 2
     { basePoint: new THREE.Vector3(14.79, -3.78, -25.59) }, // Mountain Island
     { basePoint: new THREE.Vector3(24.78, -8.06, 23.95) },  // Aurora East
-    { basePoint: new THREE.Vector3(39.5, -5.94, 0.42) },    // Aurora East2
+    { basePoint: new THREE.Vector3(39.5, -5.94, 0.42) },    // Aurora East 2
     { basePoint: new THREE.Vector3(25.66, -2.44, -9.89) },  // Aurora North West
     { basePoint: new THREE.Vector3(9.7, -0.98, 16.31) },    // Aurora South
     { basePoint: new THREE.Vector3(-33.35, -8.06, -24.63) },// Dunes 1
@@ -1015,37 +959,39 @@ gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
       // Animate Ghost Leviathans
       ghostLeviathans.forEach(ghost => ghost.animate());
     
-      // === SeaDragonLL animation (on smaller ellipse) ===
-      {
-        const t = (elapsed / 57) % 1;
-        const pos = curveLL.getPoint(t);
-        SeaDragonLL.position.copy(pos);
+      if (SeaDragonLL && SeaDragonIA1 && SeaDragonIA2) {
+        // === SeaDragonLL animation (on smaller ellipse) ===
+        {
+          const t = (elapsed / 57) % 1;
+          const pos = curveLL.getPoint(t);
+          SeaDragonLL.position.copy(pos);
 
-        const tangent = curveLL.getTangent(t).normalize();
-        const angle = Math.atan2(tangent.x, tangent.z);
-        SeaDragonLL.rotation.set(0, angle, 0);
-      }
+          const tangent = curveLL.getTangent(t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonLL.rotation.set(0, angle, 0);
+        }
 
-      // === SeaDragonIA1 animation (on larger curve, counterclockwise) ===
-      {
-        const t = (elapsed / 79) % 1; // slower, bigger loop
-        const pos = curveIAL.getPoint(1 - t); // reverse direction
-        SeaDragonIA1.position.copy(pos);
+        // === SeaDragonIA1 animation (on larger curve, counterclockwise) ===
+        {
+          const t = (elapsed / 79) % 1; // slower, bigger loop
+          const pos = curveIAL.getPoint(1 - t); // reverse direction
+          SeaDragonIA1.position.copy(pos);
 
-        const tangent = curveIAL.getTangent(1 - t).normalize();
-        const angle = Math.atan2(tangent.x, tangent.z);
-        SeaDragonIA1.rotation.set(0, angle + Math.PI, 0);
-      }
+          const tangent = curveIAL.getTangent(1 - t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonIA1.rotation.set(0, angle + Math.PI, 0);
+        }
 
-      // === SeaDragonIA2 animation (same curve, opposite side) ===
-      {
-        const t = (elapsed / 79 + 0.5) % 1; // offset by half a loop
-        const pos = curveIAL.getPoint(1 - t);
-        SeaDragonIA2.position.copy(pos);
+        // === SeaDragonIA2 animation (same curve, opposite side) ===
+        {
+          const t = (elapsed / 79 + 0.5) % 1; // offset by half a loop
+          const pos = curveIAL.getPoint(1 - t);
+          SeaDragonIA2.position.copy(pos);
 
-        const tangent = curveIAL.getTangent(1 - t).normalize();
-        const angle = Math.atan2(tangent.x, tangent.z);
-        SeaDragonIA2.rotation.set(0, angle + Math.PI, 0);
+          const tangent = curveIAL.getTangent(1 - t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonIA2.rotation.set(0, angle + Math.PI, 0);
+        }
       }
     }
     // --------------------------
@@ -1064,5 +1010,4 @@ gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
 </script>
 </body>
 </html>
-
 
