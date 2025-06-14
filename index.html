@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <title>Subnautica 3D Map</title>
+  <link rel="icon" href="https://mrchocolateaddict.github.io/Subnautica3DMap/favicon.ico" type="image/x-icon" />
   <style>
     body { margin: 0; overflow: hidden; }
     canvas { display: block; }
@@ -13,16 +14,324 @@
       margin-top: -1em;
       text-shadow: 0 0 5px black;
     }
+    #loadingOverlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      color: white;
+      font-family: sans-serif;
+      font-size: 2em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+    }
+    #loadingBarContainer {
+      width: 300px;
+      height: 10px;
+      background: #444;
+      margin: 1em auto 0 auto;;
+      border-radius: 5px;
+      box-shadow: inset 0 0 5px #222;
+    }
+
+    #loadingBarProgress {
+      width: 0%;
+      height: 100%;
+      background: #a5def8;
+      border-radius: 5px;
+      transition: width 0.3s ease;
+    }
+
+    #loadingTitle {
+      font-size: 1.5em;
+      font-weight: 600;
+      color: #a5def8;
+      margin-bottom: 0.5em;
+    }
+    #loadingText {
+      animation: pulse 0.8s infinite alternate;
+      text-align: center;
+    }
+
+    @keyframes pulse {
+      from { opacity: 0.3; }
+      to   { opacity: 1; }
+    }
   </style>
 </head>
 <body>
+
+<div id="loadingOverlay">
+  <div>
+    <div id="loadingTitle">Subnautica 3D Map</div>
+    <div id="loadingText">Loading...</div>
+    <div id="loadingBarContainer">
+      <div id="loadingBarProgress"></div>
+    </div>
+  </div>
+</div>
+
 <script type="module">
   import * as THREE from 'https://esm.sh/three@0.152.2';
   import { OrbitControls } from 'https://esm.sh/three@0.152.2/examples/jsm/controls/OrbitControls.js';
   import { GLTFLoader } from 'https://esm.sh/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
   import GUI from 'https://cdn.jsdelivr.net/npm/lil-gui@0.18/+esm';
   import { CSS2DRenderer, CSS2DObject } from 'https://esm.sh/three@0.152.2/examples/jsm/renderers/CSS2DRenderer.js';
-    
+
+
+  class GhostLeviathan {
+    constructor(loader, points, baseScale = 0.06, numNecks = 3, numMids = 9, scaleFactor = 0.82, speed = 0.001, fixedDelay = 8.12) {
+      this.loader = loader;
+      this.points = points;
+      this.baseScale = baseScale;
+      this.numNecks = numNecks;
+      this.numMids = numMids;
+      this.scaleFactor = scaleFactor;
+      this.speed = speed;
+      this.fixedDelay = fixedDelay;
+
+      this.curve = new THREE.CatmullRomCurve3(points, false, 'chordal', 0.5);
+      this.pathHistory = [];
+      this.segments = [];
+      this.segmentDelays = [];
+      this.t = 0;
+      this.visible = true;
+    }
+
+    async load() {
+      // Load all segments
+      const head = await this.loadSegment('GhostHead.glb');
+      head.scale.set(this.baseScale*0.9, this.baseScale*0.9, this.baseScale*0.9);
+      this.segments.push(head);
+      this.segmentDelays.push(0);
+
+      for (let i = 0; i < this.numNecks; i++) {
+        const neck = await this.loadSegment('GhostNeck.glb');
+        neck.scale.set(this.baseScale, this.baseScale, this.baseScale);
+        this.segments.push(neck);
+        this.segmentDelays.push(this.fixedDelay);
+      }
+
+      for (let i = 0; i < this.numMids; i++) {
+        const mid = await this.loadSegment('GhostMid.glb');
+        const scaleXY = this.baseScale * Math.pow(this.scaleFactor, i);
+        mid.scale.set(scaleXY, scaleXY, this.baseScale);
+        this.segments.push(mid);
+        this.segmentDelays.push(this.fixedDelay);
+      }
+
+      this.prefillPathHistory();
+    }
+
+    loadSegment(path) {
+      return new Promise((resolve) => {
+        this.loader.load(path, (gltf) => {
+          const model = gltf.scene;
+          scene.add(model);
+          resolve(model);
+        });
+      });
+    }
+
+    prefillPathHistory() {
+      let tempT = Math.random(); // Randomize start location on curve
+      const step = this.speed;
+      const totalDelay = this.segmentDelays.reduce((a,b) => a+b, 0);
+
+      while (this.pathHistory.length < totalDelay) {
+        const pos = this.curve.getPointAt(tempT);
+        this.pathHistory.unshift(pos.clone());
+        tempT += step;
+        if (tempT > 1) tempT -= 1;
+      }
+
+      let timeOffset = 0;
+      for (let i = 1; i < this.segments.length; i++) {
+        timeOffset += this.segmentDelays[i];
+        const index = Math.floor(timeOffset);
+        if (this.pathHistory[index]) {
+          this.segments[i].position.copy(this.pathHistory[index]);
+          const lookIndex = index - 2;
+          if (this.pathHistory[lookIndex]) {
+            this.segments[i].lookAt(this.pathHistory[lookIndex]);
+          }
+        }
+      }
+
+      const head = this.segments[0];
+      const headPos = this.curve.getPointAt(tempT);
+      head.position.copy(headPos);
+      const lookPos = this.curve.getPointAt((tempT + 0.01) % 1);
+      head.lookAt(lookPos);
+      this.t = tempT;
+    }
+
+    setVisible(flag) {
+      this.visible = flag;
+      this.segments.forEach(seg => seg.visible = flag);
+    }
+
+    animate() {
+      const maxPath = 100;
+      if (!this.visible || this.segments.length === 0) return;
+
+      this.t += this.speed;
+      if (this.t > 1) this.t = 0;
+
+      const head = this.segments[0];
+      const position = this.curve.getPointAt(this.t);
+      head.position.copy(position);
+
+      const lookAtT = (this.t + 0.01) % 1;
+      const lookAtPos = this.curve.getPointAt(lookAtT);
+      head.lookAt(lookAtPos);
+
+      this.pathHistory.unshift(head.position.clone());
+      if (this.pathHistory.length > maxPath) this.pathHistory.pop();
+
+      let timeOffset = 0;
+      for (let i = 1; i < this.segments.length; i++) {
+        timeOffset += this.segmentDelays[i];
+        const index = Math.floor(timeOffset);
+        const lookIndex = index - 2;
+
+        if (this.pathHistory[index]) {
+          this.segments[i].position.copy(this.pathHistory[index]);
+          if (this.pathHistory[lookIndex]) {
+            this.segments[i].lookAt(this.pathHistory[lookIndex]);
+          }
+        }
+      }
+    } // End animate()
+  } // ----- End Ghost Leviathan Class
+
+
+  class ReaperLeviathan {
+    constructor(loader, points, baseScale = 0.05, numNecks = 1, numMids = 4, speed = 0.001, delay = 12) {
+      this.loader = loader;
+      this.points  = points;
+      this.baseScale = baseScale;
+      this.numNecks = numNecks;
+      this.numMids = numMids;
+      this.speed = speed;
+      this.delay = delay;
+
+      this.curve = new THREE.CatmullRomCurve3(points, false, 'chordal', 0.5);
+      this.pathHistory = [];
+      this.segments = [];
+      this.t = 0;
+      this.visible = true;
+    }
+
+    async load() {
+      // Load head
+      const head = await this.loadSegment('ReaperHead.glb');
+      head.scale.set(this.baseScale, this.baseScale, this.baseScale);
+      this.segments.push(head);
+
+      // Load neck(s)
+      for (let i = 0; i < this.numNecks; i++) {
+        const neck = await this.loadSegment('ReaperNeck.glb');
+        neck.scale.set(this.baseScale, this.baseScale, this.baseScale);
+        this.segments.push(neck);
+      }
+
+      // Load mids
+      for (let i = 0; i < this.numMids; i++) {
+        const mid = await this.loadSegment('ReaperMid.glb');
+        mid.scale.set(this.baseScale, this.baseScale, this.baseScale);
+        this.segments.push(mid);
+      }
+
+      // Load tail
+      const tail = await this.loadSegment('ReaperTail.glb');
+      tail.scale.set(this.baseScale, this.baseScale, this.baseScale);
+      this.segments.push(tail);
+
+      this.prefillPathHistory();
+    }
+
+    loadSegment(path) {
+      return new Promise(resolve => {
+        this.loader.load(path, gltf => {
+          scene.add(gltf.scene);
+          resolve(gltf.scene);
+        });
+      });
+    }
+
+    prefillPathHistory() {
+      let tempT = Math.random();
+      const step = this.speed;
+      const neededLength = this.segments.length * this.delay;
+
+      while (this.pathHistory.length < neededLength) {
+        const pos = this.curve.getPointAt(tempT);
+        this.pathHistory.unshift(pos.clone());
+        tempT = (tempT + step) % 1;
+      }
+
+      // Initialize all segments along curve
+      for (let i = 1; i < this.segments.length; i++) {
+        const index = i * this.delay;
+        const lookIdx = index - 2;
+        if (this.pathHistory[index]) {
+          this.segments[i].position.copy(this.pathHistory[index]);
+          if (this.pathHistory[lookIdx]) {
+            this.segments[i].lookAt(this.pathHistory[lookIdx]);
+          }
+        }
+      }
+
+      const head = this.segments[0];
+      const headPos = this.curve.getPointAt(tempT);
+      head.position.copy(headPos);
+      const lookPos = this.curve.getPointAt((tempT + 0.01) % 1);
+      head.lookAt(lookPos);
+
+      this.t = tempT;
+    }
+
+    setVisible(flag) {
+      this.visible = flag;
+      this.segments.forEach(s => s.visible = flag);
+    }
+
+    animate() {
+      const maxPath = this.segments.length * this.delay + 5;
+      if (!this.visible || this.segments.length === 0) return;
+
+      this.t = (this.t + this.speed) % 1;
+
+      const head = this.segments[0];
+      const pos = this.curve.getPointAt(this.t);
+      head.position.copy(pos);
+
+      const lookT = (this.t + 0.01) % 1;
+      head.lookAt(this.curve.getPointAt(lookT));
+
+      this.pathHistory.unshift(head.position.clone());
+      if (this.pathHistory.length > maxPath) this.pathHistory.pop();
+
+      for (let i = 1; i < this.segments.length; i++) {
+        const idx = i * this.delay;
+        const lookIdx = idx - 2;
+        if (this.pathHistory[idx]) {
+          const s = this.segments[i];
+          s.position.copy(this.pathHistory[idx]);
+          if (this.pathHistory[lookIdx]) {
+            s.lookAt(this.pathHistory[lookIdx]);
+          }
+        }
+      }
+    } // End animate()
+  } // ----- End Reaper Leviathan Class
+
+
   // Helper function
   function setEscapePodsVisibility(visible) {
     escapePodsGroup.visible = visible;
@@ -52,7 +361,7 @@
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.outputEncoding = THREE.sRGBEncoding; // for correct color space
+  renderer.outputColorSpace  = THREE.SRGBColorSpace; 
   document.body.appendChild(renderer.domElement);
 
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -82,52 +391,105 @@
 
   // dat.GUI toggle
   const gui = new GUI();
-  const options = { showWater: true };
+  // Define options
+  const options = {
+    showWater: true,
+    showEscapePods: false,
+    showSmallWrecks: false,
+    showLargeWrecks: false,
+    showLeviathans: true
+  };
+  // Toggle for water surface
   gui.add(options, 'showWater').name('Water Surface').onChange(value => {
     waterSurface.visible = value;
   });
 
-  // Load heightmap JSON and create surface with texture
-  fetch('heightmap.json')
-    .then(res => res.json())
-    .then(heightmap => {
-      const width = heightmap[0].length;
-      const height = heightmap.length;
-      const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
-      const position = geometry.attributes.position;
 
-      for (let i = 0; i < position.count; i++) {
-        const ix = i % width;
-        const iy = Math.floor(i / width);
-        const z = heightmap[iy][ix];
-        // Rounding in Python code in surface/
-        const correctedZ = (z === null || isNaN(z)) ? -999 : z / 35;
-        position.setZ(i, correctedZ);
-      }
+  // ========================================= Heightmap
+  const loadingBar = document.getElementById('loadingBarProgress');
 
-      geometry.computeVertexNormals();
-
-      const textureLoader = new THREE.TextureLoader();
-      textureLoader.load('surfaceTexture.png', (texture) => {
-        texture.wrapS = THREE.ClampToEdgeWrapping;
-        texture.wrapT = THREE.ClampToEdgeWrapping;
-        texture.minFilter = THREE.LinearFilter;
-        texture.encoding = THREE.sRGBEncoding;
-
-        const material = new THREE.MeshStandardMaterial({
-          map: texture,
-          side: THREE.DoubleSide,
-          metalness: 0.1,
-          roughness: 0.8,
-          clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
-          clipShadows: true
-        });
-
-        const mesh = new THREE.Mesh(geometry, material);
-        mesh.rotation.x = -Math.PI / 2;
-        scene.add(mesh);
-      });
+  function loadHeightmapImage(url) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.crossOrigin = ''; // in case you're loading from another domain
+      img.onload = () => resolve(img);
+      img.onerror = reject;
+      img.src = url;
     });
+  }
+
+  async function processHeightmapImage(url) {
+    const img = await loadHeightmapImage(url);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+
+    const imageData = ctx.getImageData(0, 0, img.width, img.height);
+    const { data } = imageData;
+
+    const width = img.width;
+    const height = img.height;
+    const geometry = new THREE.PlaneGeometry(100, 100, width - 1, height - 1);
+    const position = geometry.attributes.position;
+
+    // Adjust these based on your encoding
+    const minZ = -500;
+    const maxZ = 160;
+    const scaleZ = maxZ - minZ;
+
+    for (let i = 0; i < position.count; i++) {
+      const ix = i % width;
+      const iy = Math.floor(i / width);
+
+      const pixelIndex = (iy * width + ix) * 4;
+      const high = data[pixelIndex];     // red channel
+      const low = data[pixelIndex + 1];  // green channel
+      const heightValue = ((high << 8) + low) / 65535; // normalized 0–1
+      const z = minZ + heightValue * scaleZ;
+
+      position.setZ(i, z / 35); // adjust this divisor to scale z visually
+
+      if (i % 100000 === 0 && loadingBar) {
+        const percent = Math.floor((i / position.count) * 100);
+        loadingBar.style.width = Math.min(100, percent) + '%';
+        await new Promise(r => setTimeout(r, 0)); // let browser update the DOM
+      }
+    }
+
+    geometry.computeVertexNormals();
+
+    const textureLoader = new THREE.TextureLoader();
+    textureLoader.load('surfaceTexture.png', (texture) => {
+      texture.wrapS = THREE.ClampToEdgeWrapping;
+      texture.wrapT = THREE.ClampToEdgeWrapping;
+      texture.minFilter = THREE.LinearFilter;
+      texture.colorSpace = THREE.SRGBColorSpace;
+
+      const material = new THREE.MeshStandardMaterial({
+        map: texture,
+        side: THREE.DoubleSide,
+        metalness: 0.1,
+        roughness: 0.8,
+        clippingPlanes: [ new THREE.Plane(new THREE.Vector3(0, 1, 0), 998) ],
+        clipShadows: true
+      });
+
+      const mesh = new THREE.Mesh(geometry, material);
+      mesh.rotation.x = -Math.PI / 2;
+      scene.add(mesh);
+
+      // Hide loading overlay when done
+      document.getElementById('loadingOverlay').style.display = 'none';
+    });
+  }
+
+  processHeightmapImage('heightmap_16bit.png').catch(err => {
+    console.error('Failed to load heightmap image:', err);
+    document.getElementById('loadingText').textContent = 'Failed to load data.';
+  });
 
   // GLB models
   const loader = new GLTFLoader();
@@ -139,8 +501,7 @@
   scene.add(escapePodsGroup);
 
   // Toggle control
-  const optionsEP = { showEscapePods: false }; // Change to true/false for default
-  gui.add(optionsEP, 'showEscapePods').name('Escape Pods').onChange(value => {
+  gui.add(options, 'showEscapePods').name('Escape Pods').onChange(value => {
     setEscapePodsVisibility(value);
   });
 
@@ -178,7 +539,7 @@
 
     });
     // After loading all pods
-    setEscapePodsVisibility(optionsEP.showEscapePods);
+    setEscapePodsVisibility(options.showEscapePods);
   }, undefined, function (error) {
     console.error('Error loading Escape Pod model:', error);
   });
@@ -206,8 +567,7 @@
   scene.add(smallWrecksGroup);
 
   // Toggle control
-  const optionsSW = { showSmallWrecks: false }; // Change to true/false for default
-  gui.add(optionsSW, 'showSmallWrecks').name('Small Wrecks').onChange(value => {
+  gui.add(options, 'showSmallWrecks').name('Small Wrecks').onChange(value => {
     smallWrecksGroup.visible = value;
   });
 
@@ -222,7 +582,7 @@
       smallWrecksGroup.add(cloneSW);
     });
     // After loading all pods
-    setSmallWrecksVisibility(optionsSW.showSmallWrecks);
+    setSmallWrecksVisibility(options.showSmallWrecks);
   }, undefined, function (error) {
     console.error('Error loading Small Wreck model:', error);
   });
@@ -258,12 +618,10 @@ const largeWreckPositions = [
 const largeWrecksGroup = new THREE.Group();
 scene.add(largeWrecksGroup);
 
-// Toggle control
-const optionsLW = { showLargeWrecks: false }; // Change to true/false for default
-gui.add(optionsLW, 'showLargeWrecks').name('Large Wrecks').onChange(value => {
-  largeWrecksGroup.visible = value;
-});
-
+  // Toggle control
+  gui.add(options, 'showLargeWrecks').name('Large Wrecks').onChange(value => {
+    largeWrecksGroup.visible = value;
+  });
 // Load and clone model
 loader.load('LargeWreck.glb', function (gltf) {
   const baseModelLW = gltf.scene;
@@ -275,7 +633,7 @@ loader.load('LargeWreck.glb', function (gltf) {
     largeWrecksGroup.add(cloneLW);
   });
   // After loading all pods
-  setLargeWrecksVisibility(optionsLW.showLargeWrecks);
+  setLargeWrecksVisibility(options.showLargeWrecks);
 }, undefined, function (error) {
   console.error('Error loading Large Wreck model:', error);
 });
@@ -336,7 +694,6 @@ loader.load('LargeWreck.glb', function (gltf) {
       }
     });
 
-    //model.scale.set(0.05, 0.025, 0.05); // ds2
     const scaleFactor = 0.9;
     model3.scale.set(0.1*scaleFactor, 0.08*scaleFactor, 0.1*scaleFactor); // ds4
     model3.position.set(0, -30, 0); // Position
@@ -395,12 +752,250 @@ loader.load('LargeWreck.glb', function (gltf) {
     console.error('Error loading GLB model:', error);
   });
 
-  // ---------------------------------- DONE
+  // ============================================================= Leviathan Logic
 
-  // Animation loop
+  // Global Leviathan variables
+  let SeaDragonLL;
+  let SeaDragonIA1;
+  let SeaDragonIA2;
+
+  gui.add(options, 'showLeviathans').name('Leviathans').onChange(value => {
+    // Existing Sea Dragon visibility toggles
+    if (SeaDragonLL) SeaDragonLL.visible = value;
+    if (SeaDragonIA1) SeaDragonIA1.visible = value;
+    if (SeaDragonIA2) SeaDragonIA2.visible = value;
+
+    // Toggle all Ghost Leviathans visibility
+    ghostLeviathans.forEach(ghost => ghost.setVisible(value));
+
+    // Toggle all Reaper Leviathans visibility
+    reaperLeviathans.forEach(reaper => reaper.setVisible(value));
+  });
+
+  //  ============================================================== Sea Dragons
+  loader.load('SeaDragon.glb', function(gltf) {
+  const SeaDragonScale = 0.31;
+
+  SeaDragonLL = gltf.scene;
+  SeaDragonIA1 = SeaDragonLL.clone(true);
+  SeaDragonIA2 = SeaDragonLL.clone(true);
+
+  // Position and rotate
+  SeaDragonLL.scale.set(SeaDragonScale, SeaDragonScale, SeaDragonScale);
+  SeaDragonLL.position.set(7, -53, 7);
+  SeaDragonLL.rotation.y = Math.PI;
+  scene.add(SeaDragonLL);
+  SeaDragonLL.visible = options.showLeviathans;
+
+  // Position and rotate
+  SeaDragonIA1.scale.set(SeaDragonScale, SeaDragonScale, SeaDragonScale);
+  SeaDragonIA1.position.set(-1, -43, -1);
+  SeaDragonIA1.rotation.y = -0.25
+  scene.add(SeaDragonIA1);
+  SeaDragonIA1.visible = options.showLeviathans;
+
+   // Position and rotate
+  SeaDragonIA2.scale.set(SeaDragonScale, SeaDragonScale, SeaDragonScale);
+  SeaDragonIA2.position.set(6, -43, 6);
+  SeaDragonIA2.rotation.y = 0.8*Math.PI
+  scene.add(SeaDragonIA2);
+  SeaDragonIA2.visible = options.showLeviathans;
+
+  }, undefined, function(error) {
+    console.error('Error loading GLB model:', error);
+  });
+
+
+  class EllipticalCurve extends THREE.Curve {
+    constructor(radiusX = 0, radiusZ = 0, center = new THREE.Vector3(0, 0, 0),
+    rotationDegrees = 0) {
+      super();
+      this.radiusX = radiusX;
+      this.radiusZ = radiusZ;
+      this.center = center;
+      this.rotation = THREE.MathUtils.degToRad(rotationDegrees); // convert degrees to radians
+    }
+
+    getPoint(t) {
+      const angle = t * Math.PI * 2;
+      const xUnrotated = this.radiusX * Math.cos(angle);
+      const zUnrotated = this.radiusZ * Math.sin(angle);
+
+      // Apply rotation around Y axis
+      const xRotated = xUnrotated * Math.cos(this.rotation) - zUnrotated * Math.sin(this.rotation);
+      const zRotated = xUnrotated * Math.sin(this.rotation) + zUnrotated * Math.cos(this.rotation);
+
+      const x = this.center.x + xRotated;
+      const z = this.center.z + zRotated;
+      const y = this.center.y;
+
+      return new THREE.Vector3(x, y, z);
+    }
+  }
+
+  // SeaDragonLL Curve
+  const curveLL = new EllipticalCurve(2.5, 4, new THREE.Vector3(8, -53, 6), 45);
+  const curveLLPoints = curveLL.getPoints(100);
+  // Draw curve
+  // const curveLLGeometry = new THREE.BufferGeometry().setFromPoints(curveLLPoints);
+  // const curveLLMaterial = new THREE.LineBasicMaterial({ color: 0xdd0000 });
+  // const curveLL_Line = new THREE.Line(curveLLGeometry, curveLLMaterial);
+  // scene.add(curveLL_Line);
+
+  // SeaDragonIA1 Curve
+  const curveIAL = new EllipticalCurve(4.5, 6.3, new THREE.Vector3(4, -43.5, 1), 35);
+  const curveIALPoints = curveIAL.getPoints(100);
+  // Draw curve
+  // const curveIAGeometry = new THREE.BufferGeometry().setFromPoints(curveIALPoints);
+  // const curveIAMaterial = new THREE.LineBasicMaterial({ color: 0x00ce00 });
+  // const curveIA_Line = new THREE.Line(curveIAGeometry, curveIAMaterial);
+  // scene.add(curveIA_Line);
+
+  // -------------------------- Draw a point
+  // const pointGeometry = new THREE.SphereGeometry(0.5, 16, 16);
+  // const pointMaterial = new THREE.MeshBasicMaterial({ color: 0xff00ff });
+  // const sphere = new THREE.Mesh(pointGeometry, pointMaterial);
+  // sphere.position.copy(new THREE.Vector3(12, -29, -20));
+  // scene.add(sphere);
+  // --------------------------
+
+  // ============================================================== Ghost Leviathans
+  const ghostLeviathans = [];
+  const ghostLeviathanConfigs = [
+    // (W(-)/E(+), Up(+)/Down(-), S(+)/N(-))
+    // Lost River Bois
+    { basePoint: new THREE.Vector3(-14, -29, 4) },   // By Gargantuan
+    { basePoint: new THREE.Vector3(-15, -27, -18) }, // By TwistyRoot
+    { basePoint: new THREE.Vector3(12, -29, -20) },  // By third entrance
+    // Surface Bois
+    { basePoint: new THREE.Vector3(-14.89, -8.57, -36.01) }, // North
+    { basePoint: new THREE.Vector3(-30.37, -7.44, 30.72) },  // Far SW
+    { basePoint: new THREE.Vector3(-12.27, -8.01, 33.12) }   // Under F.I.
+  ];
+
+  // Create a function that generates a circle-ish CatmullRom curve around basePoint
+  function generateCurveFromBase(basePoint, curveScale = 1.0) {
+    const offsetPoints = [
+      new THREE.Vector3(-2.48, 0, 0),
+      new THREE.Vector3(-2.4, 0.4, -1.2),
+      new THREE.Vector3(-1.2, 0.24, -2.4),
+      new THREE.Vector3(0, 0, -2.8),
+      new THREE.Vector3(1.2, -0.24, -2.4),
+      new THREE.Vector3(2.4, -0.4, -1.2),
+      new THREE.Vector3(3.2, -0.16, 0),
+      new THREE.Vector3(2.4, 0.4, 1.2),
+      new THREE.Vector3(1.2, 0.24, 2.4),
+      new THREE.Vector3(0, 0, 2.8),
+      new THREE.Vector3(-1.2, -0.24, 2.4),
+      new THREE.Vector3(-2.48, -0.4, 1.2),
+      new THREE.Vector3(-2.48, 0, 0)
+    ];
+    // Randomly switch direction - they swim counter clockwise
+    if (Math.random() < 0.5) {
+      offsetPoints.reverse();
+    }
+    return offsetPoints.map(p =>
+      p.clone().multiplyScalar(curveScale).add(basePoint)
+    );
+  }
+
+  // Load all ghosts
+  async function loadGhostLeviathans() {
+    for (const cfg of ghostLeviathanConfigs) {
+      const points = generateCurveFromBase(cfg.basePoint);
+      const ghost = new GhostLeviathan(loader, points);
+      await ghost.load();
+      ghost.setVisible(options.showLeviathans);
+      ghostLeviathans.push(ghost);
+    }
+  }
+  loadGhostLeviathans();
+
+  // ============================================================== Reapers
+
+  const reaperLeviathans = [];
+  // (W(-)/E(+), Up(+)/Down(-), S(+)/N(-))
+  const reaperConfigs = [                                   // Reaper Name
+    { basePoint: new THREE.Vector3(15.98, -6.84, -35.18) }, // North East 1
+    { basePoint: new THREE.Vector3(29.62, -7.44, -32.57) }, // North East 2
+    { basePoint: new THREE.Vector3(14.79, -3.78, -25.59) }, // Mountain Island
+    { basePoint: new THREE.Vector3(24.78, -8.06, 23.95) },  // Aurora East
+    { basePoint: new THREE.Vector3(39.5, -5.94, 0.42) },    // Aurora East 2
+    { basePoint: new THREE.Vector3(25.66, -2.44, -9.89) },  // Aurora North West
+    { basePoint: new THREE.Vector3(9.7, -0.98, 16.31) },    // Aurora South
+    { basePoint: new THREE.Vector3(-33.35, -8.06, -24.63) },// Dunes 1
+    { basePoint: new THREE.Vector3(-41.04, -5.66, -20.31) },// Dunes 2
+    { basePoint: new THREE.Vector3(-28.64, -3.25, -1.1) },  // Dunes 3
+    { basePoint: new THREE.Vector3(-40.94, -8.48, -3.49) }  // Dunes 4
+  ];
+
+  (async function loadReapers(){
+    for (const cfg of reaperConfigs) {
+      const pts = generateCurveFromBase(cfg.basePoint, 1);
+      const reaper = new ReaperLeviathan(loader, pts);
+      await reaper.load();
+      reaper.setVisible(options.showLeviathans);
+      reaperLeviathans.push(reaper);
+    }
+  })();
+
+  // ---------------------------------- Leviathans done
+
+
+  // ---------------------------------- Animation loop
+  const clock = new THREE.Clock();
   function animate() {
     requestAnimationFrame(animate);
     controls.update();
+
+    // Leviathan Animation Logic
+    const elapsed = clock.getElapsedTime();
+
+    if (options.showLeviathans) {
+
+      // Animate Reaper
+      reaperLeviathans.forEach(r => r.animate());
+
+      // Animate Ghost Leviathans
+      ghostLeviathans.forEach(ghost => ghost.animate());
+    
+      if (SeaDragonLL && SeaDragonIA1 && SeaDragonIA2) {
+        // === SeaDragonLL animation (on smaller ellipse) ===
+        {
+          const t = (elapsed / 57) % 1;
+          const pos = curveLL.getPoint(t);
+          SeaDragonLL.position.copy(pos);
+
+          const tangent = curveLL.getTangent(t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonLL.rotation.set(0, angle, 0);
+        }
+
+        // === SeaDragonIA1 animation (on larger curve, counterclockwise) ===
+        {
+          const t = (elapsed / 79) % 1; // slower, bigger loop
+          const pos = curveIAL.getPoint(1 - t); // reverse direction
+          SeaDragonIA1.position.copy(pos);
+
+          const tangent = curveIAL.getTangent(1 - t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonIA1.rotation.set(0, angle + Math.PI, 0);
+        }
+
+        // === SeaDragonIA2 animation (same curve, opposite side) ===
+        {
+          const t = (elapsed / 79 + 0.5) % 1; // offset by half a loop
+          const pos = curveIAL.getPoint(1 - t);
+          SeaDragonIA2.position.copy(pos);
+
+          const tangent = curveIAL.getTangent(1 - t).normalize();
+          const angle = Math.atan2(tangent.x, tangent.z);
+          SeaDragonIA2.rotation.set(0, angle + Math.PI, 0);
+        }
+      }
+    }
+    // --------------------------
+
     renderer.render(scene, camera);
     labelRenderer.render(scene, camera);
   }
@@ -415,3 +1010,4 @@ loader.load('LargeWreck.glb', function (gltf) {
 </script>
 </body>
 </html>
+
